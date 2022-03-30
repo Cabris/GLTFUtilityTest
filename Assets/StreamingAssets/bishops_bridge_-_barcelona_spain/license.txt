@@ -1,0 +1,11 @@
+Model Information:
+* title:	Bishop’s Bridge - Barcelona, Spain
+* source:	https://sketchfab.com/3d-models/bishops-bridge-barcelona-spain-e3cc10871d03467fbe5f8c5f19bf8cab
+* author:	Azad Balabanian (https://sketchfab.com/azadbal)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Bishop’s Bridge - Barcelona, Spain" (https://sketchfab.com/3d-models/bishops-bridge-barcelona-spain-e3cc10871d03467fbe5f8c5f19bf8cab) by Azad Balabanian (https://sketchfab.com/azadbal) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
