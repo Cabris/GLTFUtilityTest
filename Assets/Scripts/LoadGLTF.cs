@@ -1,9 +1,6 @@
-﻿using System.Collections;
-using System.Collections.Generic;
-using UnityEngine;
+﻿using UnityEngine;
 using Siccity.GLTFUtility;
 using System.IO;
-using System;
 
 public class LoadGLTF : MonoBehaviour
 {
@@ -13,9 +10,11 @@ public class LoadGLTF : MonoBehaviour
     // Start is called before the first frame update
     void Start()
     {
-        ImportGLTFAsync(Path.Combine(Application.streamingAssetsPath, filename));
+        string path = Path.Combine(Application.streamingAssetsPath, filename);
+        //android
+        path = Path.Combine(Application.persistentDataPath, "gltf", filename);
+        ImportGLTFAsync(path);
     }
-
 
     void ImportGLTFAsync(string filepath)
     {
