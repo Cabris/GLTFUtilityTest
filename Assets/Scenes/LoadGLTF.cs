@@ -12,7 +12,7 @@ public class LoadGLTF : MonoBehaviour
     {
         string path = Path.Combine(Application.streamingAssetsPath, filename);
         //android
-        path = Path.Combine(Application.persistentDataPath, "gltf", filename);
+        //path = Path.Combine(Application.persistentDataPath, "gltf", filename);
         ImportGLTFAsync(path);
     }
 
