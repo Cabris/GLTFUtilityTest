@@ -16,24 +16,28 @@ using UnityEditor.AssetImporters;
 #endif
 using UnityEngine;
 
-namespace Siccity.GLTFUtility {
+namespace Siccity.GLTFUtility
+{
 #if ENABLE_DEFAULT_GLB_IMPORTER
-	[ScriptedImporter(1, "gltf")]
+    [ScriptedImporter(1, "gltf")]
 #else
     [ScriptedImporter(1, null, overrideExts: new[] { "gltf" })]
 #endif
-	public class GLTFImporter : ScriptedImporter {
+    public class GLTFImporter : ScriptedImporter
+    {
 
-		public ImportSettings importSettings;
+        public ImportSettings importSettings;
 
-		public override void OnImportAsset(AssetImportContext ctx) {
-			// Load asset
-			AnimationClip[] animations;
-			if (importSettings == null) importSettings = new ImportSettings();
-			GameObject root = Importer.LoadFromFile(ctx.assetPath, importSettings, out animations, Format.GLTF);
+        public override void OnImportAsset(AssetImportContext ctx)
+        {
+            // Load asset
+            AnimationClip[] animations;
+            if (importSettings == null)
+                importSettings = new ImportSettings();
+            GameObject root = Importer.LoadFromFile(ctx.assetPath, importSettings, out animations, Format.GLTF);
 
-			// Save asset
-			GLTFAssetUtility.SaveToAsset(root, animations, ctx, importSettings);
-		}
-	}
+            // Save asset
+            GLTFAssetUtility.SaveToAsset(root, animations, ctx, importSettings);
+        }
+    }
 }

@@ -9,372 +9,408 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.Networking;
 
-namespace Siccity.GLTFUtility {
-	/// <summary> API used for importing .gltf and .glb files </summary>
-	public static class Importer {
-		public static GameObject LoadFromFile(string filepath, Format format = Format.AUTO) {
-			AnimationClip[] animations;
-			return LoadFromFile(filepath, new ImportSettings(), out animations, format);
-		}
+namespace Siccity.GLTFUtility
+{
+    /// <summary> API used for importing .gltf and .glb files </summary>
+    public static class Importer
+    {
 
-		public static GameObject LoadFromFile(string filepath, ImportSettings importSettings, Format format = Format.AUTO) {
-			AnimationClip[] animations;
-			return LoadFromFile(filepath, importSettings, out animations, format);
-		}
+#if UNITY_EDITOR
+        public static GameObject LoadFromFile(string filepath, ImportSettings importSettings, Format format = Format.AUTO)
+        {
+            AnimationClip[] animations;
+            return LoadFromFile(filepath, importSettings, out animations, format);
+        }
 
-		public static GameObject LoadFromFile(string filepath, ImportSettings importSettings, out AnimationClip[] animations, Format format = Format.AUTO) {
-			if (format == Format.GLB) {
-				return ImportGLB(filepath, importSettings, out animations);
-			} else if (format == Format.GLTF) {
-				return ImportGLTF(filepath, importSettings, out animations);
-			} else {
-				string extension = Path.GetExtension(filepath).ToLower();
-				if (extension == ".glb") return ImportGLB(filepath, importSettings, out animations);
-				else if (extension == ".gltf") return ImportGLTF(filepath, importSettings, out animations);
-				else {
-					Debug.Log("Extension '" + extension + "' not recognized in " + filepath);
-					animations = null;
-					return null;
-				}
-			}
-		}
+        public static GameObject LoadFromFile(string filepath, ImportSettings importSettings, out AnimationClip[] animations, Format format = Format.AUTO)
+        {
+            if (format == Format.GLB)
+            {
+                return ImportGLB(filepath, importSettings, out animations);
+            }
+            else if (format == Format.GLTF)
+            {
+                return ImportGLTF(filepath, importSettings, out animations);
+            }
+            else
+            {
+                string extension = Path.GetExtension(filepath).ToLower();
+                if (extension == ".glb") return ImportGLB(filepath, importSettings, out animations);
+                else if (extension == ".gltf") return ImportGLTF(filepath, importSettings, out animations);
+                else
+                {
+                    Debug.Log("Extension '" + extension + "' not recognized in " + filepath);
+                    animations = null;
+                    return null;
+                }
+            }
+        }
 
-		/// <param name="bytes">GLB file is supported</param>
-		public static GameObject LoadFromBytes(byte[] bytes, ImportSettings importSettings = null) {
-			AnimationClip[] animations;
-			if (importSettings == null) importSettings = new ImportSettings();
-			return ImportGLB(bytes, importSettings, out animations);
-		}
+        private static GameObject ImportGLTF(string filepath, ImportSettings importSettings, out AnimationClip[] animations)
+        {
+            string json = File.ReadAllText(filepath);
 
-		/// <param name="bytes">GLB file is supported</param>
-		public static GameObject LoadFromBytes(byte[] bytes, ImportSettings importSettings, out AnimationClip[] animations) {
-			return ImportGLB(bytes, importSettings, out animations);
-		}
+            // Parse json
+            GLTFObject gltfObject = JsonConvert.DeserializeObject<GLTFObject>(json);
+            return gltfObject.LoadInternal(filepath, null, 0, importSettings, out animations);
+        }
 
-		public static void LoadFromFileAsync(string filepath, ImportSettings importSettings, Action<GameObject, AnimationClip[]> onFinished, Action<float> onProgress = null) {
-			string extension = Path.GetExtension(filepath).ToLower();
-			if (extension == ".glb") ImportGLBAsync(filepath, importSettings, onFinished, onProgress);
-			else if (extension == ".gltf") ImportGLTFAsync(filepath, importSettings, onFinished, onProgress);
-			else {
-				Debug.Log("Extension '" + extension + "' not recognized in " + filepath);
-				onFinished(null, null);
-			}
-		}
+        private static GameObject ImportGLB(string filepath, ImportSettings importSettings, out AnimationClip[] animations)
+        {
+            FileStream stream = File.OpenRead(filepath);
+            long binChunkStart;
+            string json = GetGLBJson(stream, out binChunkStart);
+            GLTFObject gltfObject = JsonConvert.DeserializeObject<GLTFObject>(json);
+            return gltfObject.LoadInternal(filepath, null, binChunkStart, importSettings, out animations);
+        }
 
-#region GLB
-		private static GameObject ImportGLB(string filepath, ImportSettings importSettings, out AnimationClip[] animations) {
-			FileStream stream = File.OpenRead(filepath);
-			long binChunkStart;
-			string json = GetGLBJson(stream, out binChunkStart);
-			GLTFObject gltfObject = JsonConvert.DeserializeObject<GLTFObject>(json);
-			return gltfObject.LoadInternal(filepath, null, binChunkStart, importSettings, out animations);
-		}
+        #region Sync
+        private static GameObject LoadInternal(this GLTFObject gltfObject, string filepath, byte[] bytefile, long binChunkStart, ImportSettings importSettings, out AnimationClip[] animations)
+        {
+            CheckExtensions(gltfObject);
 
-		private static GameObject ImportGLB(byte[] bytes, ImportSettings importSettings, out AnimationClip[] animations) {
-			Stream stream = new MemoryStream(bytes);
-			long binChunkStart;
-			string json = GetGLBJson(stream, out binChunkStart);
-			GLTFObject gltfObject = JsonConvert.DeserializeObject<GLTFObject>(json);
-			return gltfObject.LoadInternal(null, bytes, binChunkStart, importSettings, out animations);
-		}
+            // directory root is sometimes used for loading buffers from containing file, or local images
+            string directoryRoot = filepath != null ? Directory.GetParent(filepath).ToString() + "/" : null;
 
-		public static void ImportGLBAsync(string filepath, ImportSettings importSettings, Action<GameObject, AnimationClip[]> onFinished, Action<float> onProgress = null) {
-			FileStream stream = File.OpenRead(filepath);
-			long binChunkStart;
-			string json = GetGLBJson(stream, out binChunkStart);
-			LoadAsync(json, filepath, null, binChunkStart, importSettings, onFinished, onProgress).RunCoroutine();
-		}
+            importSettings.shaderOverrides.CacheDefaultShaders();
 
-		public static void ImportGLBAsync(byte[] bytes, ImportSettings importSettings, Action<GameObject, AnimationClip[]> onFinished, Action<float> onProgress = null) {
-			Stream stream = new MemoryStream(bytes);
-			long binChunkStart;
-			string json = GetGLBJson(stream, out binChunkStart);
-			LoadAsync(json, null, bytes, binChunkStart, importSettings, onFinished, onProgress).RunCoroutine();
-		}
+            // Import tasks synchronously
+            GLTFBuffer.ImportTask bufferTask = new GLTFBuffer.ImportTask(gltfObject.buffers, filepath, bytefile, binChunkStart);
+            bufferTask.RunSynchronously();
+            GLTFBufferView.ImportTask bufferViewTask = new GLTFBufferView.ImportTask(gltfObject.bufferViews, bufferTask);
+            bufferViewTask.RunSynchronously();
+            GLTFAccessor.ImportTask accessorTask = new GLTFAccessor.ImportTask(gltfObject.accessors, bufferViewTask);
+            accessorTask.RunSynchronously();
+            GLTFImage.ImportTask imageTask = new GLTFImage.ImportTask(gltfObject.images, directoryRoot, bufferViewTask);
+            imageTask.RunSynchronously();
+            GLTFTexture.ImportTask textureTask = new GLTFTexture.ImportTask(gltfObject.textures, imageTask);
+            textureTask.RunSynchronously();
+            GLTFMaterial.ImportTask materialTask = new GLTFMaterial.ImportTask(gltfObject.materials, textureTask, importSettings);
+            materialTask.RunSynchronously();
+            GLTFMesh.ImportTask meshTask = new GLTFMesh.ImportTask(gltfObject.meshes, accessorTask, bufferViewTask, materialTask, importSettings);
+            meshTask.RunSynchronously();
+            GLTFSkin.ImportTask skinTask = new GLTFSkin.ImportTask(gltfObject.skins, accessorTask);
+            skinTask.RunSynchronously();
+            GLTFNode.ImportTask nodeTask = new GLTFNode.ImportTask(gltfObject.nodes, meshTask, skinTask, gltfObject.cameras);
+            nodeTask.RunSynchronously();
+            GLTFAnimation.ImportResult[] animationResult = gltfObject.animations.Import(accessorTask.Result, nodeTask.Result, importSettings);
+            if (animationResult != null) animations = animationResult.Select(x => x.clip).ToArray();
+            else animations = new AnimationClip[0];
 
-		private static string GetGLBJson(Stream stream, out long binChunkStart) {
-			byte[] buffer = new byte[12];
-			stream.Read(buffer, 0, 12);
-			// 12 byte header
-			// 0-4  - magic = "glTF"
-			// 4-8  - version = 2
-			// 8-12 - length = total length of glb, including Header and all Chunks, in bytes.
-			string magic = Encoding.Default.GetString(buffer, 0, 4);
-			if (magic != "glTF") {
-				Debug.LogWarning("Input does not look like a .glb file");
-				binChunkStart = 0;
-				return null;
-			}
-			uint version = System.BitConverter.ToUInt32(buffer, 4);
-			if (version != 2) {
-				Debug.LogWarning("Importer does not support gltf version " + version);
-				binChunkStart = 0;
-				return null;
-			}
-			// What do we even need the length for.
-			//uint length = System.BitConverter.ToUInt32(bytes, 8);
+            foreach (var item in bufferTask.Result)
+            {
+                item.Dispose();
+            }
 
-			// Chunk 0 (json)
-			// 0-4  - chunkLength = total length of the chunkData
-			// 4-8  - chunkType = "JSON"
-			// 8-[chunkLength+8] - chunkData = json data.
-			stream.Read(buffer, 0, 8);
-			uint chunkLength = System.BitConverter.ToUInt32(buffer, 0);
-			TextReader reader = new StreamReader(stream);
-			char[] jsonChars = new char[chunkLength];
-			reader.Read(jsonChars, 0, (int) chunkLength);
-			string json = new string(jsonChars);
+            GameObject gameObject = nodeTask.Result.GetRoot();
+            if (importSettings.extrasProcessor != null)
+            {
+                if (gltfObject.extras == null)
+                {
+                    gltfObject.extras = new JObject();
+                }
 
-			// Chunk
-			binChunkStart = chunkLength + 20;
-			stream.Close();
+                if (gltfObject.materials != null)
+                {
+                    JArray materialExtras = new JArray();
+                    bool hasMaterialExtraData = false;
+                    foreach (GLTFMaterial material in gltfObject.materials)
+                    {
+                        if (material.extras != null)
+                        {
+                            materialExtras.Add(material.extras);
+                            hasMaterialExtraData = true;
+                        }
+                        else
+                        {
+                            materialExtras.Add(new JObject());
+                        }
+                    }
+                    if (hasMaterialExtraData)
+                    {
+                        gltfObject.extras.Add("material", materialExtras);
+                    }
+                }
 
-			// Return json
-			return json;
-		}
-#endregion
+                if (gltfObject.animations != null)
+                {
+                    JArray animationExtras = new JArray();
+                    bool hasAnimationExtraData = false;
+                    foreach (GLTFAnimation animation in gltfObject.animations)
+                    {
+                        if (animation.extras != null)
+                        {
+                            hasAnimationExtraData = true;
+                            animationExtras.Add(animation.extras);
+                        }
+                        else
+                        {
+                            animationExtras.Add(new JObject());
+                        }
+                    }
+                    if (hasAnimationExtraData)
+                    {
+                        gltfObject.extras.Add("animation", animationExtras);
+                    }
+                }
 
-		private static GameObject ImportGLTF(string filepath, ImportSettings importSettings, out AnimationClip[] animations) {
-			string json = File.ReadAllText(filepath);
+                importSettings.extrasProcessor.ProcessExtras(gameObject, animations, gltfObject.extras);
+            }
+            return gameObject;
+        }
+        #endregion
 
-			// Parse json
-			GLTFObject gltfObject = JsonConvert.DeserializeObject<GLTFObject>(json);
-			return gltfObject.LoadInternal(filepath, null, 0, importSettings, out animations);
-		}
+#endif
 
-		public static void ImportGLTFAsync(string filepath, ImportSettings importSettings, Action<GameObject, AnimationClip[]> onFinished, Action<float> onProgress = null) {
-			string json = File.ReadAllText(filepath);
+        public static void LoadFromFileAsync(string filepath, ImportSettings importSettings, Action<GameObject, AnimationClip[]> onFinished, Action<float> onProgress = null)
+        {
+            string extension = Path.GetExtension(filepath).ToLower();
+            if (extension == ".glb") ImportGLBAsync(filepath, importSettings, onFinished, onProgress);
+            else if (extension == ".gltf")
+                ImportGLTFAsync(filepath, importSettings, onFinished, onProgress);
+            else
+            {
+                Debug.Log("Extension '" + extension + "' not recognized in " + filepath);
+                onFinished(null, null);
+            }
+        }
 
-			// Parse json
-			LoadAsync(json, filepath, null, 0, importSettings, onFinished, onProgress).RunCoroutine();
-		}
+        #region GLB
 
-		public abstract class ImportTask<TReturn> : ImportTask {
-			public TReturn Result;
+        public static void ImportGLBAsync(string filepath, ImportSettings importSettings, Action<GameObject, AnimationClip[]> onFinished, Action<float> onProgress = null)
+        {
+            UnityWebRequest glbReq = UnityWebRequest.Get(filepath);
+            var task = glbReq.SendWebRequest();
+            task.completed += (op) =>
+            {
+                if (glbReq.isHttpError || glbReq.isNetworkError)
+                {
+                    onFinished?.Invoke(null, null);
+                }
+                else
+                {
+                    var data = glbReq.downloadHandler.data;
+                    Stream stream = new MemoryStream(data);
+                    long binChunkStart;
+                    string json = GetGLBJson(stream, out binChunkStart);
+                    LoadAsync(json, filepath, null, binChunkStart, importSettings, onFinished, onProgress).RunCoroutine();
+                }
+            };
+        }
 
-			/// <summary> Constructor. Sets waitFor which ensures ImportTasks are completed before running. </summary>
-			public ImportTask(params ImportTask[] waitFor) : base(waitFor) { }
+        private static string GetGLBJson(Stream stream, out long binChunkStart)
+        {
+            byte[] buffer = new byte[12];
+            stream.Read(buffer, 0, 12);
+            // 12 byte header
+            // 0-4  - magic = "glTF"
+            // 4-8  - version = 2
+            // 8-12 - length = total length of glb, including Header and all Chunks, in bytes.
+            string magic = Encoding.Default.GetString(buffer, 0, 4);
+            if (magic != "glTF")
+            {
+                Debug.LogWarning("Input does not look like a .glb file");
+                binChunkStart = 0;
+                return null;
+            }
+            uint version = System.BitConverter.ToUInt32(buffer, 4);
+            if (version != 2)
+            {
+                Debug.LogWarning("Importer does not support gltf version " + version);
+                binChunkStart = 0;
+                return null;
+            }
+            // What do we even need the length for.
+            //uint length = System.BitConverter.ToUInt32(bytes, 8);
 
-			/// <summary> Runs task followed by OnCompleted </summary>
-			public TReturn RunSynchronously() {
-				if(task != null)
-				{
-					task.RunSynchronously();
-				}
-				IEnumerator en = OnCoroutine();
-				while (en.MoveNext()) { };
-				return Result;
-			}
-		}
+            // Chunk 0 (json)
+            // 0-4  - chunkLength = total length of the chunkData
+            // 4-8  - chunkType = "JSON"
+            // 8-[chunkLength+8] - chunkData = json data.
+            stream.Read(buffer, 0, 8);
+            uint chunkLength = System.BitConverter.ToUInt32(buffer, 0);
+            TextReader reader = new StreamReader(stream);
+            char[] jsonChars = new char[chunkLength];
+            reader.Read(jsonChars, 0, (int)chunkLength);
+            string json = new string(jsonChars);
 
-		public abstract class ImportTask {
-			public Task task;
-			public readonly ImportTask[] waitFor;
-			public bool IsReady { get { return waitFor.All(x => x.IsCompleted); } }
-			public bool IsCompleted { get; protected set; }
+            // Chunk
+            binChunkStart = chunkLength + 20;
+            stream.Close();
 
-			/// <summary> Constructor. Sets waitFor which ensures ImportTasks are completed before running. </summary>
-			public ImportTask(params ImportTask[] waitFor) {
-				IsCompleted = false;
-				this.waitFor = waitFor;
-			}
+            // Return json
+            return json;
+        }
+        #endregion
 
-			public virtual IEnumerator OnCoroutine(Action<float> onProgress = null) {
-				IsCompleted = true;
-				yield break;
-			}
-		}
+        public static void ImportGLTFAsync(string filepath, ImportSettings importSettings, Action<GameObject, AnimationClip[]> onFinished, Action<float> onProgress = null)
+        {
+            UnityWebRequest jsonReq = UnityWebRequest.Get(filepath);
+            var task = jsonReq.SendWebRequest();
+            task.completed += (op) =>
+            {
+                if (jsonReq.isHttpError || jsonReq.isNetworkError)
+                {
+                    onFinished?.Invoke(null, null);
+                }
+                else
+                {
+                    string json = jsonReq.downloadHandler.text;
+                    // Parse json
+                    LoadAsync(json, filepath, null, 0, importSettings, onFinished, onProgress).RunCoroutine();
+                }
+            };
+        }
 
-#region Sync
-		private static GameObject LoadInternal(this GLTFObject gltfObject, string filepath, byte[] bytefile, long binChunkStart, ImportSettings importSettings, out AnimationClip[] animations) {
-			CheckExtensions(gltfObject);
+        public abstract class ImportTask<TReturn> : ImportTask
+        {
+            public TReturn Result;
 
-			// directory root is sometimes used for loading buffers from containing file, or local images
-			string directoryRoot = filepath != null ? Directory.GetParent(filepath).ToString() + "/" : null;
+            /// <summary> Constructor. Sets waitFor which ensures ImportTasks are completed before running. </summary>
+            public ImportTask(params ImportTask[] waitFor) : base(waitFor) { }
 
-			importSettings.shaderOverrides.CacheDefaultShaders();
+            /// <summary> Runs task followed by OnCompleted </summary>
+            public TReturn RunSynchronously()
+            {
+                if (task != null)
+                {
+                    task.RunSynchronously();
+                }
+                IEnumerator en = OnCoroutine();
+                while (en.MoveNext()) { };
+                return Result;
+            }
+        }
 
-			// Import tasks synchronously
-			GLTFBuffer.ImportTask bufferTask = new GLTFBuffer.ImportTask(gltfObject.buffers, filepath, bytefile, binChunkStart);
-			bufferTask.RunSynchronously();
-			GLTFBufferView.ImportTask bufferViewTask = new GLTFBufferView.ImportTask(gltfObject.bufferViews, bufferTask);
-			bufferViewTask.RunSynchronously();
-			GLTFAccessor.ImportTask accessorTask = new GLTFAccessor.ImportTask(gltfObject.accessors, bufferViewTask);
-			accessorTask.RunSynchronously();
-			GLTFImage.ImportTask imageTask = new GLTFImage.ImportTask(gltfObject.images, directoryRoot, bufferViewTask);
-			imageTask.RunSynchronously();
-			GLTFTexture.ImportTask textureTask = new GLTFTexture.ImportTask(gltfObject.textures, imageTask);
-			textureTask.RunSynchronously();
-			GLTFMaterial.ImportTask materialTask = new GLTFMaterial.ImportTask(gltfObject.materials, textureTask, importSettings);
-			materialTask.RunSynchronously();
-			GLTFMesh.ImportTask meshTask = new GLTFMesh.ImportTask(gltfObject.meshes, accessorTask, bufferViewTask, materialTask, importSettings);
-			meshTask.RunSynchronously();
-			GLTFSkin.ImportTask skinTask = new GLTFSkin.ImportTask(gltfObject.skins, accessorTask);
-			skinTask.RunSynchronously();
-			GLTFNode.ImportTask nodeTask = new GLTFNode.ImportTask(gltfObject.nodes, meshTask, skinTask, gltfObject.cameras);
-			nodeTask.RunSynchronously();
-			GLTFAnimation.ImportResult[] animationResult = gltfObject.animations.Import(accessorTask.Result, nodeTask.Result, importSettings);
-			if (animationResult != null) animations = animationResult.Select(x => x.clip).ToArray();
-			else animations = new AnimationClip[0];
+        public abstract class ImportTask
+        {
+            public Task task;
+            public readonly ImportTask[] waitFor;
+            public bool IsReady { get { return waitFor.All(x => x.IsCompleted); } }
+            public bool IsCompleted { get; protected set; }
 
-			foreach (var item in bufferTask.Result) {
-				item.Dispose();
-			}
+            /// <summary> Constructor. Sets waitFor which ensures ImportTasks are completed before running. </summary>
+            public ImportTask(params ImportTask[] waitFor)
+            {
+                IsCompleted = false;
+                this.waitFor = waitFor;
+            }
 
-			GameObject gameObject = nodeTask.Result.GetRoot();
-			if (importSettings.extrasProcessor != null)
-			{
-				if(gltfObject.extras == null)
-				{
-					gltfObject.extras = new JObject();
-				}
+            public virtual IEnumerator OnCoroutine(Action<float> onProgress = null)
+            {
+                IsCompleted = true;
+                yield break;
+            }
+        }
 
-				if(gltfObject.materials != null)
-				{
-					JArray materialExtras = new JArray();
-					bool hasMaterialExtraData = false;
-					foreach (GLTFMaterial material in gltfObject.materials)
-					{
-						if (material.extras != null)
-						{
-							materialExtras.Add(material.extras);
-							hasMaterialExtraData = true;
-						}
-						else
-						{
-							materialExtras.Add(new JObject());
-						}
-					}
-					if (hasMaterialExtraData)
-					{
-						gltfObject.extras.Add("material", materialExtras);
-					}
-				}
+        #region Async
+        private static IEnumerator LoadAsync(string json, string filepath, byte[] bytefile, long binChunkStart, ImportSettings importSettings, Action<GameObject, AnimationClip[]> onFinished, Action<float> onProgress = null)
+        {
+            // Threaded deserialization
+            Task<GLTFObject> deserializeTask = new Task<GLTFObject>(() => JsonConvert.DeserializeObject<GLTFObject>(json));
+            deserializeTask.Start();
+            while (!deserializeTask.IsCompleted) yield return null;
+            GLTFObject gltfObject = deserializeTask.Result;
+            CheckExtensions(gltfObject);
 
-				if (gltfObject.animations != null)
-				{
-					JArray animationExtras = new JArray();
-					bool hasAnimationExtraData = false;
-					foreach (GLTFAnimation animation in gltfObject.animations)
-					{
-						if (animation.extras != null)
-						{
-							hasAnimationExtraData = true;
-							animationExtras.Add(animation.extras);
-						}
-						else
-						{
-							animationExtras.Add(new JObject());
-						}
-					}
-					if (hasAnimationExtraData)
-					{
-						gltfObject.extras.Add("animation", animationExtras);
-					}
-				}
+            // directory root is sometimes used for loading buffers from containing file, or local images
+            string directoryRoot = filepath != null ? Directory.GetParent(filepath).ToString() + "/" : null;
 
-				importSettings.extrasProcessor.ProcessExtras(gameObject, animations, gltfObject.extras);
-			}
-			return gameObject;
-		}
-#endregion
+            importSettings.shaderOverrides.CacheDefaultShaders();
 
-#region Async
-		private static IEnumerator LoadAsync(string json, string filepath, byte[] bytefile, long binChunkStart, ImportSettings importSettings, Action<GameObject, AnimationClip[]> onFinished, Action<float> onProgress = null) {
-			// Threaded deserialization
-			Task<GLTFObject> deserializeTask = new Task<GLTFObject>(() => JsonConvert.DeserializeObject<GLTFObject>(json));
-			deserializeTask.Start();
-			while (!deserializeTask.IsCompleted) yield return null;
-			GLTFObject gltfObject = deserializeTask.Result;
-			CheckExtensions(gltfObject);
+            // Setup import tasks
+            List<ImportTask> importTasks = new List<ImportTask>();
 
-			// directory root is sometimes used for loading buffers from containing file, or local images
-			string directoryRoot = filepath != null ? Directory.GetParent(filepath).ToString() + "/" : null;
+            GLTFBuffer.ImportTask bufferTask = new GLTFBuffer.ImportTask(gltfObject.buffers, filepath, bytefile, binChunkStart);
+            importTasks.Add(bufferTask);
+            GLTFBufferView.ImportTask bufferViewTask = new GLTFBufferView.ImportTask(gltfObject.bufferViews, bufferTask);
+            importTasks.Add(bufferViewTask);
+            GLTFAccessor.ImportTask accessorTask = new GLTFAccessor.ImportTask(gltfObject.accessors, bufferViewTask);
+            importTasks.Add(accessorTask);
+            GLTFImage.ImportTask imageTask = new GLTFImage.ImportTask(gltfObject.images, directoryRoot, bufferViewTask);
+            importTasks.Add(imageTask);
+            GLTFTexture.ImportTask textureTask = new GLTFTexture.ImportTask(gltfObject.textures, imageTask);
+            importTasks.Add(textureTask);
+            GLTFMaterial.ImportTask materialTask = new GLTFMaterial.ImportTask(gltfObject.materials, textureTask, importSettings);
+            importTasks.Add(materialTask);
+            GLTFMesh.ImportTask meshTask = new GLTFMesh.ImportTask(gltfObject.meshes, accessorTask, bufferViewTask, materialTask, importSettings);
+            importTasks.Add(meshTask);
+            GLTFSkin.ImportTask skinTask = new GLTFSkin.ImportTask(gltfObject.skins, accessorTask);
+            importTasks.Add(skinTask);
+            GLTFNode.ImportTask nodeTask = new GLTFNode.ImportTask(gltfObject.nodes, meshTask, skinTask, gltfObject.cameras);
+            importTasks.Add(nodeTask);
 
-			importSettings.shaderOverrides.CacheDefaultShaders();
+            // Ignite
+            for (int i = 0; i < importTasks.Count; i++)
+            {
+                TaskSupervisor(importTasks[i], onProgress).RunCoroutine();
+            }
 
-			// Setup import tasks
-			List<ImportTask> importTasks = new List<ImportTask>();
+            // Wait for all tasks to finish
+            while (!importTasks.All(x => x.IsCompleted))
+            {
+                yield return null;
+            }
 
-			GLTFBuffer.ImportTask bufferTask = new GLTFBuffer.ImportTask(gltfObject.buffers, filepath, bytefile, binChunkStart);
-			importTasks.Add(bufferTask);
-			GLTFBufferView.ImportTask bufferViewTask = new GLTFBufferView.ImportTask(gltfObject.bufferViews, bufferTask);
-			importTasks.Add(bufferViewTask);
-			GLTFAccessor.ImportTask accessorTask = new GLTFAccessor.ImportTask(gltfObject.accessors, bufferViewTask);
-			importTasks.Add(accessorTask);
-			GLTFImage.ImportTask imageTask = new GLTFImage.ImportTask(gltfObject.images, directoryRoot, bufferViewTask);
-			importTasks.Add(imageTask);
-			GLTFTexture.ImportTask textureTask = new GLTFTexture.ImportTask(gltfObject.textures, imageTask);
-			importTasks.Add(textureTask);
-			GLTFMaterial.ImportTask materialTask = new GLTFMaterial.ImportTask(gltfObject.materials, textureTask, importSettings);
-			importTasks.Add(materialTask);
-			GLTFMesh.ImportTask meshTask = new GLTFMesh.ImportTask(gltfObject.meshes, accessorTask, bufferViewTask, materialTask, importSettings);
-			importTasks.Add(meshTask);
-			GLTFSkin.ImportTask skinTask = new GLTFSkin.ImportTask(gltfObject.skins, accessorTask);
-			importTasks.Add(skinTask);
-			GLTFNode.ImportTask nodeTask = new GLTFNode.ImportTask(gltfObject.nodes, meshTask, skinTask, gltfObject.cameras);
-			importTasks.Add(nodeTask);
+            // Fire onFinished when all tasks have completed
+            GameObject root = nodeTask.Result.GetRoot();
+            GLTFAnimation.ImportResult[] animationResult = gltfObject.animations.Import(accessorTask.Result, nodeTask.Result, importSettings);
+            AnimationClip[] animations = new AnimationClip[0];
+            if (animationResult != null) animations = animationResult.Select(x => x.clip).ToArray();
+            if (onFinished != null) onFinished(nodeTask.Result.GetRoot(), animations);
 
-			// Ignite
-			for (int i = 0; i < importTasks.Count; i++) {
-				TaskSupervisor(importTasks[i], onProgress).RunCoroutine();
-			}
+            // Close file streams
+            foreach (var item in bufferTask.Result)
+            {
+                item.Dispose();
+            }
+        }
 
-			// Wait for all tasks to finish
-			while (!importTasks.All(x => x.IsCompleted)) yield return null;
+        /// <summary> Keeps track of which threads to start when </summary>
+        private static IEnumerator TaskSupervisor(ImportTask importTask, Action<float> onProgress = null)
+        {
+            // Wait for required results to complete before starting
+            while (!importTask.IsReady) yield return null;
+            // Prevent asynchronous data disorder
+            yield return null;
+            if (importTask.task != null)
+            {
+                // Start threaded task
+                importTask.task.Start();
+                // Wait for task to complete
+                while (!importTask.task.IsCompleted) yield return null;
+                // Prevent asynchronous data disorder
+                yield return new WaitForSeconds(0.1f);
+            }
+            // Run additional unity code on main thread
+            importTask.OnCoroutine(onProgress).RunCoroutine();
+            //Wait for additional coroutines to complete
+            while (!importTask.IsCompleted) { yield return null; }
+            // Prevent asynchronous data disorder
+            yield return new WaitForSeconds(0.1f);
+        }
+        #endregion
 
-			// Fire onFinished when all tasks have completed
-			GameObject root = nodeTask.Result.GetRoot();
-			GLTFAnimation.ImportResult[] animationResult = gltfObject.animations.Import(accessorTask.Result, nodeTask.Result, importSettings);
-			AnimationClip[] animations = new AnimationClip[0];
-			if (animationResult != null) animations = animationResult.Select(x => x.clip).ToArray();
-			if (onFinished != null) onFinished(nodeTask.Result.GetRoot(), animations);
-
-			// Close file streams
-			foreach (var item in bufferTask.Result) {
-				item.Dispose();
-			}
-		}
-
-		/// <summary> Keeps track of which threads to start when </summary>
-		private static IEnumerator TaskSupervisor(ImportTask importTask, Action<float> onProgress = null) {
-			// Wait for required results to complete before starting
-			while (!importTask.IsReady) yield return null;
-			// Prevent asynchronous data disorder
-			yield return null;
-			if(importTask.task != null)
-			{
-				// Start threaded task
-				importTask.task.Start();
-				// Wait for task to complete
-				while (!importTask.task.IsCompleted) yield return null;
-				// Prevent asynchronous data disorder
-				yield return new WaitForSeconds(0.1f);
-			}
-			// Run additional unity code on main thread
-			importTask.OnCoroutine(onProgress).RunCoroutine();
-			//Wait for additional coroutines to complete
-			while (!importTask.IsCompleted) { yield return null; }
-			// Prevent asynchronous data disorder
-			yield return new WaitForSeconds(0.1f);
-		}
-#endregion
-
-		private static void CheckExtensions(GLTFObject gLTFObject) {
-			if (gLTFObject.extensionsRequired != null) {
-				for (int i = 0; i < gLTFObject.extensionsRequired.Count; i++) {
-					switch (gLTFObject.extensionsRequired[i]) {
-						case "KHR_materials_pbrSpecularGlossiness":
-							break;
-						case "KHR_draco_mesh_compression":
-							break;
-						default:
-							Debug.LogWarning($"GLTFUtility: Required extension '{gLTFObject.extensionsRequired[i]}' not supported. Import process will proceed but results may vary.");
-							break;
-					}
-				}
-			}
-		}
-	}
+        private static void CheckExtensions(GLTFObject gLTFObject)
+        {
+            if (gLTFObject.extensionsRequired != null)
+            {
+                for (int i = 0; i < gLTFObject.extensionsRequired.Count; i++)
+                {
+                    switch (gLTFObject.extensionsRequired[i])
+                    {
+                        case "KHR_materials_pbrSpecularGlossiness":
+                            break;
+                        case "KHR_draco_mesh_compression":
+                            break;
+                        default:
+                            Debug.LogWarning($"GLTFUtility: Required extension '{gLTFObject.extensionsRequired[i]}' not supported. Import process will proceed but results may vary.");
+                            break;
+                    }
+                }
+            }
+        }
+    }
 }
