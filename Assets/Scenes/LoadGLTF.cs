@@ -10,15 +10,17 @@ public class LoadGLTF : MonoBehaviour
     // Start is called before the first frame update
     void Start()
     {
-        string path = Path.Combine(Application.streamingAssetsPath, filename);
+        string path = Path.Combine(Application.streamingAssetsPath, "gltf", filename);
         //android
-        //path = Path.Combine(Application.persistentDataPath, "gltf", filename);
+#if UNITY_ANDROID&&!UNITY_EDITOR
+        path = Path.Combine(Application.persistentDataPath, "gltf", filename);
+#endif
         ImportGLTFAsync(path);
     }
 
     void ImportGLTFAsync(string filepath)
     {
-        Importer.ImportGLTFAsync(filepath, new ImportSettings(), OnFinishAsync, OnProgress);
+        Importer.ImportGLBAsync(filepath, new ImportSettings(), OnFinishAsync, OnProgress);
     }
 
     private void OnProgress(float progress)
